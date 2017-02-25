@@ -30,6 +30,8 @@
     "typescript": "^2.3.0-dev.20170225"
   },
   "devDependencies": {
+    "@types/mocha": "^2.2.39",
+    "@types/node": "^7.0.5",
     "coveralls": "^2.11.6",
     "del": "^2.0.2",
     "gulp": "^3.9.1",
