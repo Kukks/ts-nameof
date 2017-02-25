@@ -1,74 +1,56 @@
-import * as fs from "fs";
-import {Promise} from "es6-promise";
-import {getFileNamesFromGlobs} from "./getFileNamesFromGlobs";
-import {stream} from "./stream";
+import * as ts from "typescript";
 
-// todo: cleanup
+// TODOS
+// 1. Ensure nameof function is same one from library.
+// 2. Throw build errors when someone uses nameof improperly (better than failing silently and someone not catching the issue)
+// 3. Implement nameof<T>(propertyAccessFunc)
+// 4. Implement nameof.full
 
-interface Api {
-    (): NodeJS.ReadWriteStream;
-    replaceInFiles(fileNames: string[], opts?: { encoding: string }, onFinished?: (err?: NodeJS.ErrnoException) => void): void;
-    replaceInFiles(fileNames: string[], onFinished?: (err?: NodeJS.ErrnoException) => void): void;
+const nameofFunctionName = "nameof";
+
+const nameofTransformerFactory: ts.TransformerFactory<ts.SourceFile> = context => {
+    return file => visitNodeAndChildren(file, context) as ts.SourceFile;
+};
+
+function visitNodeAndChildren(node: ts.Node, context: ts.TransformationContext): ts.Node {
+    if (node == null)
+        return node;
+
+    node = visitNode(node);
+    const visitor: ts.Visitor = childNode => visitNodeAndChildren(childNode, context);
+    return ts.visitEachChild(node, visitor, context);
 }
 
-type OnFinishedType = (err?: NodeJS.ErrnoException) => void;
+function visitNode(node: ts.Node) {
+    if (!isNameofCallExpression(node))
+        return node;
 
-function replaceInFiles(fileNames: string[], onFinished?: OnFinishedType): void;
-function replaceInFiles(fileNames: string[], opts?: { encoding?: string }, onFinished?: OnFinishedType): void;
-function replaceInFiles(fileNames: string[], optsOrOnFinished?: { encoding?: string } | OnFinishedType, onFinishedParam?: OnFinishedType): void {
-    const opts = { encoding: "utf8" };
-    let onFinished: OnFinishedType = () => {};
+    const nameofString = getNameofStringFromArgument(node.arguments[0]);
+    if (nameofString == null)
+        return node;
 
-    if (optsOrOnFinished instanceof Function) {
-        onFinished = optsOrOnFinished;
-    }
-    else if (onFinishedParam instanceof Function) {
-        onFinished = onFinishedParam;
-    }
-
-    if (optsOrOnFinished && !(optsOrOnFinished instanceof Function)) {
-        opts.encoding = optsOrOnFinished.encoding || opts.encoding;
-    }
-
-    getFileNamesFromGlobs(fileNames).then(globbedFileNames => doReplaceInFiles(globbedFileNames, opts.encoding)).then(() => {
-        onFinished();
-    }).catch(/*istanbul ignore next*/ err => {
-        onFinished(err);
-    });
+    return ts.createLiteral(nameofString);
 }
 
-let api: Api = stream as Api;
-api.replaceInFiles = replaceInFiles;
-
-export = api;
-
-function doReplaceInFiles(fileNames: string[], encoding: string) {
-    const promises: Promise<void>[] = [];
-
-    fileNames.forEach(fileName => {
-        promises.push(new Promise<void>((resolve, reject) => {
-            let contents = "";
-            fs.createReadStream(fileName)
-                .pipe(stream())
-                .on("error", /* istanbul ignore next */ (e: any) => {
-                    reject(e);
-                })
-                .on("data", (buffer: Buffer) => {
-                    contents += buffer.toString();
-                })
-                .on("finish", () => {
-                    fs.writeFile(fileName, contents, (writeErr) => {
-                        /* istanbul ignore if */
-                        if (writeErr) {
-                            reject(writeErr);
-                            return;
-                        }
-
-                        resolve();
-                    });
-                });
-        }));
-    });
-
-    return Promise.all(promises);
+function isNameofCallExpression(node: ts.Node): node is ts.CallExpression {
+    const callExpression = node as ts.CallExpression;
+    return callExpression.kind === ts.SyntaxKind.CallExpression &&
+        callExpression.expression != null &&
+        callExpression.expression.getText() === nameofFunctionName &&
+        callExpression.arguments != null &&
+        callExpression.arguments.length === 1;
 }
+
+function getNameofStringFromArgument(arg: ts.Expression) {
+    if (isPropertyAccessExpression(arg))
+        return arg.name.getText();
+
+    return arg.getText();
+}
+
+function isPropertyAccessExpression(arg: ts.Expression): arg is ts.PropertyAccessExpression {
+    const propAccessExpr = arg as ts.PropertyAccessExpression;
+    return propAccessExpr.kind === ts.SyntaxKind.PropertyAccessExpression && propAccessExpr.name != null;
+}
+
+export default nameofTransformerFactory;
